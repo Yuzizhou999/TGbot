@@ -1,0 +1,4 @@
+google-genai==0.7.0
+fastapi==0.95.2
+uvicorn==0.22.0
+redis>=4.6.0
