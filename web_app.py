@@ -162,3 +162,105 @@ async def reset(request: Request):
         await reset_session(session_id)
         return {"ok": True}
     return {"ok": False}
+
+
+# -------- RAG 集成（延迟加载，依赖可选） --------
+from typing import Optional
+rag_service = None
+
+def get_rag_service():
+    global rag_service
+    if rag_service is None:
+        try:
+            from rag import RAGService, load_sample_texts
+        except Exception as e:
+            raise RuntimeError('RAG dependencies not installed or rag.py missing: ' + str(e))
+        rag_service = RAGService()
+    return rag_service
+
+
+@app.post('/rag/ingest')
+async def rag_ingest(request: Request):
+    """Ingest sample_docs into the vectorstore. Returns count or error."""
+    try:
+        svc = get_rag_service()
+    except Exception as e:
+        return {"error": str(e)}
+
+    texts = []
+    try:
+        from rag import load_sample_texts
+        texts = load_sample_texts()
+    except Exception:
+        return {"error": "failed to load sample texts"}
+
+    try:
+        svc.ingest_texts(texts)
+        return {"ok": True, "ingested": len(texts)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post('/rag/query')
+async def rag_query(request: Request):
+    data = await request.json()
+    question = data.get('question')
+    k = int(data.get('k', 4))
+    if not question:
+        return {"error": "missing question"}
+
+    try:
+        svc = get_rag_service()
+    except Exception as e:
+        return {"error": str(e)}
+
+    try:
+        svc.init()
+    except Exception as e:
+        return {"error": "RAG initialization failed: " + str(e)}
+
+    try:
+        docs = svc.similarity_search(question, k=k)
+    except Exception as e:
+        return {"error": "similarity search failed: " + str(e)}
+
+    try:
+        answer = await svc.generate_answer(question, docs)
+        return {"answer": answer, "docs": [getattr(d, 'metadata', getattr(d, 'metadata', {})) for d in docs]}
+    except Exception as e:
+        return {"error": "generation failed: " + str(e)}
+
+
+@app.get('/rag/status')
+async def rag_status(load: Optional[bool] = False):
+    """Return status about the persisted FAISS index in data/faiss_index.
+    If load=true is provided, attempt to initialize the RAGService and report success or error."""
+    import os, time
+    path = 'data/faiss_index'
+    exists = os.path.exists(path) and bool(os.listdir(path))
+    files = []
+    if os.path.exists(path):
+        for fn in os.listdir(path):
+            fp = os.path.join(path, fn)
+            try:
+                st = os.stat(fp)
+                files.append({
+                    'name': fn,
+                    'size': st.st_size,
+                    'mtime': int(st.st_mtime)
+                })
+            except Exception:
+                files.append({'name': fn, 'size': None, 'mtime': None})
+
+    resp = {'path': path, 'exists': exists, 'files': files}
+
+    if load:
+        try:
+            svc = get_rag_service()
+            svc.init()
+            resp['load'] = {'ok': True}
+        except Exception as e:
+            resp['load'] = {'ok': False, 'error': str(e)}
+
+    return resp
+
