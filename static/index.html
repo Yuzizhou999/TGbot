@@ -24,10 +24,16 @@
       <div id="log" class="log"></div>
 
       <div class="input-area">
-        <div class="input-box">
-          <input id="input" class="input" placeholder="玩桌游不可以捉急哟" autocomplete="off">
+        <div class="input-box" style="flex:1;display:flex;gap:8px;align-items:center">
+          <input id="input" class="input" placeholder="在此输入你的问题，选中“使用知识库”将基于知识库检索回答" autocomplete="off" style="flex:1">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-left:6px">
+            <input id="use-knowledge" type="checkbox"> 使用知识库
+          </label>
         </div>
-        <button id="send" class="send">发送</button>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button id="send" class="send">发送</button>
+          <div id="rag-result" style="font-size:13px;color:var(--muted)"></div>
+        </div>
       </div>
     </div>
 

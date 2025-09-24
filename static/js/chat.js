@@ -39,52 +39,129 @@ function addLoading(){
   return bubble
 }
 
+async function ragQuery(){
+  const qinp = document.getElementById('rag-question')
+  // keep for compatibility but prefer using sendMessage with checkbox
+  const resBox = document.getElementById('rag-result')
+  const question = (document.getElementById('input') && document.getElementById('input').value || '').trim()
+  if(!question){ alert('请输入要在知识库中查询的问题'); return }
+  if(resBox) resBox.textContent = '正在查询知识库...'
+  try{
+    const res = await fetch('/rag/query', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question})})
+    const j = await res.json()
+    if(j.error){
+      if(resBox) resBox.textContent = '查询失败: ' + j.error
+      return
+    }
+    const answer = j.answer || ''
+    let docsHtml = ''
+    if(Array.isArray(j.docs) && j.docs.length){
+      docsHtml = '<div style="margin-top:6px;font-weight:600">相关来源</div>'
+      for(const d of j.docs){
+        const src = d && d.source ? d.source : JSON.stringify(d)
+        docsHtml += `<div style="font-size:12px;color:var(--muted);">• ${src}</div>`
+      }
+    }
+    if(window.marked && window.DOMPurify){
+      const node = addMessage('bot', '')
+      node.innerHTML = DOMPurify.sanitize(marked.parse(answer || ''))
+    }else{
+      addMessage('bot', answer || '')
+    }
+    if(resBox) resBox.innerHTML = docsHtml
+  }catch(e){
+    if(resBox) resBox.textContent = '查询失败，请查看控制台或服务端日志'
+    console.error(e)
+  }
+}
+
 async function sendMessage(){
   const msg = input.value.trim()
   if(!msg) return
-  // user bubble
+  // 显示用户消息立即
   addMessage('user', msg)
   input.value = ''
-  // bot loading
-  const loadingBubble = addLoading()
 
-  try{
-    // 附带 session_id（若有）
-    const payload = { message: msg }
-    const sid = localStorage.getItem('session_id')
-    if(sid) payload.session_id = sid
+  const useKnowledge = document.getElementById('use-knowledge') && document.getElementById('use-knowledge').checked
+  const resBox = document.getElementById('rag-result')
+  console.log('[chat] sendMessage useKnowledge=', useKnowledge)
 
-    const res = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
-    const j = await res.json()
-    const content = j.reply || j.error || '无回复'
-    // 使用服务器返回的 messages 来回显完整上下文（前端先清空再渲染）
-    if(j.messages && Array.isArray(j.messages)){
-      log.innerHTML = ''
-      for(const m of j.messages){
-        const kind = m.role === 'assistant' ? 'bot' : 'user'
-        // 使用 marked + DOMPurify 渲染内容
-        if(window.marked && window.DOMPurify){
-          const node = addMessage(kind, '')
-          node.innerHTML = DOMPurify.sanitize(marked.parse(m.content || ''))
-        }else{
-          addMessage(kind, m.content || '')
+  if(useKnowledge){
+    // 使用知识库查询流程
+    if(resBox) resBox.textContent = '正在查询知识库...'
+      try{
+  console.log('[chat] calling /rag/query with question=', msg)
+      const res = await fetch('/rag/query', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({question: msg})})
+      const j = await res.json()
+  console.log('[chat] /rag/query response=', j)
+      if(j.error){
+        if(resBox) resBox.textContent = '查询失败: ' + j.error
+        return
+      }
+      const answer = j.answer || ''
+      if(window.marked && window.DOMPurify){
+        const node = addMessage('bot', '')
+        node.innerHTML = DOMPurify.sanitize(marked.parse(answer || ''))
+      }else{
+        addMessage('bot', answer || '')
+      }
+      // 显示来源
+      let docsHtml = ''
+      if(Array.isArray(j.docs) && j.docs.length){
+        docsHtml = '<div style="margin-top:6px;font-weight:600">相关来源</div>'
+        for(const d of j.docs){
+          const src = d && d.source ? d.source : JSON.stringify(d)
+          docsHtml += `<div style="font-size:12px;color:var(--muted);">• ${src}</div>`
         }
       }
-    }else{
-      // 回退至以前的单条渲染
-      if(window.marked && window.DOMPurify){
-        const raw = marked.parse(content || '')
-        loadingBubble.innerHTML = DOMPurify.sanitize(raw)
-      }else{
-        loadingBubble.innerHTML = renderMarkdown(content)
-      }
+      if(resBox) resBox.innerHTML = docsHtml
+    }catch(e){
+      if(resBox) resBox.textContent = '查询失败，请查看控制台或服务端日志'
+      console.error(e)
     }
-    // 保存返回的 session_id
-    if(j.session_id) localStorage.setItem('session_id', j.session_id)
-  }catch(e){
-    loadingBubble.textContent = '请求失败，请稍后再试'
+  }else{
+    // 普通聊天流程
+    const loadingBubble = addLoading()
+    try{
+      // 附带 session_id（若有）
+      const payload = { message: msg }
+  console.log('[chat] calling /chat with payload=', payload)
+      const sid = localStorage.getItem('session_id')
+      if(sid) payload.session_id = sid
+
+  const res = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+  const j = await res.json()
+  console.debug('[chat] /chat response=', j)
+      const content = j.reply || j.error || '无回复'
+      // 使用服务器返回的 messages 来回显完整上下文（前端先清空再渲染）
+      if(j.messages && Array.isArray(j.messages)){
+        log.innerHTML = ''
+        for(const m of j.messages){
+          const kind = m.role === 'assistant' ? 'bot' : 'user'
+          // 使用 marked + DOMPurify 渲染内容
+          if(window.marked && window.DOMPurify){
+            const node = addMessage(kind, '')
+            node.innerHTML = DOMPurify.sanitize(marked.parse(m.content || ''))
+          }else{
+            addMessage(kind, m.content || '')
+          }
+        }
+      }else{
+        // 回退至以前的单条渲染
+        if(window.marked && window.DOMPurify){
+          const raw = marked.parse(content || '')
+          loadingBubble.innerHTML = DOMPurify.sanitize(raw)
+        }else{
+          loadingBubble.innerHTML = renderMarkdown(content)
+        }
+      }
+      // 保存返回的 session_id
+      if(j.session_id) localStorage.setItem('session_id', j.session_id)
+    }catch(e){
+      loadingBubble.textContent = '请求失败，请稍后再试'
+    }
+    log.scrollTop = log.scrollHeight
   }
-  log.scrollTop = log.scrollHeight
 }
 
 send.addEventListener('click', sendMessage)
@@ -125,6 +202,12 @@ window.addEventListener('load', async ()=>{
       }
     }
   }catch(e){ console.warn('加载历史失败', e) }
+})
+
+// RAG 按钮绑定（如果页面存在这些控件）
+window.addEventListener('load', ()=>{
+  const ragQueryBtn = document.getElementById('rag-query')
+  if(ragQueryBtn) ragQueryBtn.addEventListener('click', ragQuery)
 })
 
 // 简易 Markdown 渲染器：支持段落、换行、**加粗**、*斜体*、无序列表、```代码块```。
